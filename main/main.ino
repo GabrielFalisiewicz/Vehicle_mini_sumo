@@ -30,7 +30,7 @@ long last_time = 0.0;
 
 //Konfiguracja WiFi (client mode)
 const char* ssid = "JF";
-const char* password = "wifiFJ11";
+const char* password = ".";
 
 //Parametry silników
 int max_value = 255;
