@@ -2,7 +2,25 @@
 #include "Wire.h"
 
 #include "WiFi.h"
-#include "AsyncUDP.h"
+#include "ESPAsyncWebServer.h"
+#include "AsyncTCP.h"
+
+//AsyncWebServer
+AsyncWebServer server(1234);
+AsyncWebSocket ws1("/ws");
+AsyncWebSocket ws2("/wr");
+
+//Buffor PWM
+String buffor_data = "";
+int value_pwm;
+bool data_update = false;
+bool auto_drive = false;
+bool power_select = false;
+bool lidar_power = false;
+bool buzzer_power = false;
+
+int value_engine_a = 0;
+int value_engine_b = 0;
 
 //Konfiguracja ekspandera
 PCF8574 PCF_01(0x20);
@@ -11,51 +29,148 @@ PCF8574 PCF_01(0x20);
 #define PWM_A 2
 #define PWM_B 3
 
-//Konfiguracja WiFi
-const char* ssid = "vehicle_wifi_sumo";
-const char* password = "AtSumo01";
-const int channel = 6;
-//Samo urządzenie + diagnostyka
-const int max_users = 2; 
-const bool hidden_ssid = false;
-const int expower = 20; //dBm;
+//Obsługa czasu
+long current_time;
+long last_time = 0.0;
 
-IPAddress local_IP(192, 168, 5, 5);
-IPAddress gateway(255, 255, 255, 0);
-IPAddress sub(255, 255, 255, 0);
-
-//Ustawienia UDP
-const int udp_channel_A_port = 1234;
-const int udp_channel_B_port = 5678;
-
-AsyncUDP udp_channel_A;
-AsyncUDP udp_channel_B;
-
-String udp_message_a;
-String udp_message_b;
+//Konfiguracja WiFi (client mode)
+const char* ssid = "JF";
+const char* password = "wifiFJ11";
 
 //Parametry silników
 int max_value = 255;
-int value_engine_a = 0;
-int value_engine_b = 0;
 
 //PWM Ferquency
 #define FERQ 5000
 
-void set_start_config_track(){
-    PCF_01.write(0, LOW);
-    PCF_01.write(1, HIGH);
-    PCF_01.write(2, HIGH);
-    PCF_01.write(3, LOW);
+void set_left_track(int a, int b){
+    PCF_01.write(0, a);
+    PCF_01.write(1, b);
 }
 
-
-
-void change_direction_track(int first_pin, int sec_pin){
-   PCF_01.toggle(first_pin);
-   PCF_01.toggle(sec_pin);
+void set_right_track(int c, int d){
+    PCF_01.write(2, c);
+    PCF_01.write(3, d);
 }
 
+void WiFiEvent(WiFiEvent_t event) {
+    switch (event) {
+        case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+            Serial.println("Połączono z WiFi.");
+            break;
+        case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+            Serial.print("Adres IP: ");
+            Serial.println(WiFi.localIP());
+            break;
+        case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+            Serial.println("Rozłączono z WiFi, ponawianie połączenia...");
+            WiFi.reconnect();
+            break;
+        default:
+            break;
+    }
+}
+
+void onWSEvent1(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
+    if (type == WS_EVT_CONNECT) {
+        Serial.println("WB connect left");
+        delay(100);
+        ws1.textAll("led_01");
+    } else if (type == WS_EVT_DISCONNECT) {
+        Serial.println("WB disconnect");
+    } else if (type == WS_EVT_DATA) {
+        buffor_data = "";
+        for (size_t i = 0; i < len; i++) buffor_data += (char)data[i];
+        int first_search = buffor_data.indexOf(" ");
+        String message = buffor_data.substring(0, first_search);
+        value_pwm = buffor_data.substring(first_search + 1, buffor_data.length()).toInt();
+        Serial.println("WB left");
+        Serial.println(message);
+        Serial.println(value_engine_a);
+        if(message.equals("left_pad") && !auto_drive){
+          value_pwm = map(value_pwm, -100, 100, -255, 255);
+          value_engine_a = value_pwm;
+        } else if(message.equals("pwm_up")){
+            if(max_value == 255){
+              return;
+            } else {
+              max_value += value_pwm;
+              Serial.println(max_value);
+            }
+        } else if(message.equals("pwm_down")){
+           if(max_value == 0){
+             return;
+           } else {
+             max_value += value_pwm;
+             Serial.println(max_value);
+           }
+        } else if(message.equals("UP")){
+            auto_drive = true;
+            value_engine_a = value_pwm;
+            value_engine_b = value_pwm;
+        } else if(message.equals("DOWN")){
+            auto_drive = true;
+            value_engine_a = value_pwm;
+            value_engine_b = value_pwm;
+        }
+    }
+}
+
+void onWSEvent2(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
+    if (type == WS_EVT_CONNECT) {
+        Serial.println("WB connect right");
+        delay(100);
+        ws2.textAll("led_04");
+        delay(100);
+        ws2.textAll("led_02");
+    } else if (type == WS_EVT_DISCONNECT) {
+        Serial.println("WB disconnect");
+    } else if (type == WS_EVT_DATA) {
+        buffor_data = "";
+        for (size_t i = 0; i < len; i++) buffor_data += (char)data[i];
+        int first_search = buffor_data.indexOf(" ");
+        String message = buffor_data.substring(0, first_search);
+        value_pwm = buffor_data.substring(first_search + 1, buffor_data.length()).toInt();
+         Serial.println("WB right");
+         Serial.println(message);
+        if(message.equals("right_pad") && !auto_drive){
+          value_pwm = map(value_pwm, -100, 100, -255, 255);
+          value_engine_b = value_pwm;
+        } else if(message.equals("left")){
+          auto_drive = true;
+          value_engine_a = value_pwm;
+          value_engine_b = 0;
+        } else if(message.equals("right")){
+          auto_drive = true;
+          value_engine_b = value_pwm;
+          value_engine_a = 0;
+        } else if(message.equals("power")){
+            Serial.println("Power");
+            Serial.println(power_select);
+            if(power_select){
+               power_select = false;
+               ws2.textAll("led_02_off");
+            } else {
+               power_select = true;
+               ws2.textAll("led_02_on");
+            }
+        } else if(message.equals("lidar")){
+              if(value_pwm){
+                 lidar_power = true;
+                 ws2.textAll("led_03_on");
+              } else {
+                 lidar_power = false;
+                 ws2.textAll("led_03_off");
+              }
+        } else if(message.equals("buzzer")){
+              if(!buzzer_power){
+                buzzer_power = true;
+              } else {
+                buzzer_power = false;
+              }
+        }
+    }
+}
 
 void setup() {
     Serial.begin(115200);
@@ -65,39 +180,73 @@ void setup() {
     analogWriteResolution(8);
     pinMode(PWM_A, OUTPUT);
     pinMode(PWM_B, OUTPUT);
-    set_start_config_track();
-    WiFi.softAP(ssid, password, channel, hidden_ssid, max_users);
-    WiFi.softAPConfig(local_IP, gateway, sub);
-    WiFi.setTxPower((wifi_power_t)expower);
+
+    set_left_track(1, 0);
+    set_right_track(0, 1);
+
     WiFi.onEvent(WiFiEvent);
 
-    //Obsługa pakietów
-    if(udp_channel_A.listen(udp_channel_A_port)){
-        Serial.println("Kanał A jest aktywny");
-        udp_channel_A.onPacket([](AsyncUDPPacket packet){
-            udp_message_a = String((char*)packet.data());
-            value_engine_a = udp_message_a.toInt();
-        });
+    WiFi.begin(ssid, password);
+    Serial.println("Łączenie z WiFi");
+
+    if (!WiFi.status() != WL_CONNECTED) {
+        Serial.println("Błąd Łączenia WiFi");
+        delay(500);
     }
 
-    if(udp_channel_B.listen(udp_channel_B_port)){
-        Serial.println("Kanał B jest aktywny");
-        udp_channel_B.onPacket([](AsyncUDPPacket packet){
-            udp_message_b = String((char*)packet.data());
-            value_engine_b = udp_message_a.toInt();
-        });
+    // Inicjalizacja WebSocket
+    ws1.onEvent(onWSEvent1);
+    server.addHandler(&ws1);
+    ws2.onEvent(onWSEvent2);
+    server.addHandler(&ws2);
+    server.begin();
+    IPAddress ip = WiFi.localIP();
+    Serial.println(ip);
+}
+
+void set_config_engines(int value_a, int value_b){
+
+    if(value_a <= 0){
+        set_left_track(0, 1);
+    } else {
+        set_left_track(1, 0);
     }
+
+    if(value_b <= 0){
+       set_right_track(1, 0);
+    } else {
+       set_right_track(0, 1);
+    }
+
+    if(value_a < 0){
+        value_a *= (-1);
+      
+    }
+    if(value_b < 0){
+        value_b *= (-1);
+    }
+
+    if(value_a > max_value){
+        value_a = max_value;
+    }
+
+    if(value_b > max_value){
+       value_b = max_value;
+    }
+
+    analogWrite(PWM_A, value_a);
+    analogWrite(PWM_B, value_b);
 }
 
 void loop() {
-    
-}
-
-void WiFiEvent(WiFiEvent_t event){
-    switch(event){
-      case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
-      Serial.println("Nawiązano połączenie");
-      break;
+    current_time = millis();
+    if(power_select)  set_config_engines(value_engine_a, value_engine_b);
+    if(current_time - last_time > 1500){
+      if(auto_drive){
+          value_engine_a = 0;
+          value_engine_b = 0;
+          auto_drive = false;
+      }
+      last_time = current_time;
     }
-    
 }
