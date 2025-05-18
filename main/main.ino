@@ -15,6 +15,8 @@ String buffor_data = "";
 int value_pwm;
 bool data_update = false;
 
+bool auto_drive = false;
+
 int value_engine_a = 0;
 int value_engine_b = 0;
 
@@ -31,15 +33,13 @@ long last_time = 0.0;
 
 //Konfiguracja WiFi (client mode)
 const char* ssid = "JF";
-const char* password = "wifiFJ11";
+const char* password = "";
 
 //Parametry silników
-int max_value = 250;
+int max_value = 255;
 
 //PWM Ferquency
 #define FERQ 5000
-
-
 
 void set_left_track(int a, int b){
     PCF_01.write(0, a);
@@ -69,8 +69,6 @@ void WiFiEvent(WiFiEvent_t event) {
     }
 }
 
-
-
 void onWSEvent1(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
     if (type == WS_EVT_CONNECT) {
         Serial.println("WB connect left");
@@ -89,6 +87,20 @@ void onWSEvent1(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTy
         if(message.equals("left_pad")){
           value_pwm = map(value_pwm, -100, 100, -255, 255);
           value_engine_a = value_pwm;
+        } else if(message.equals("pwm_up")){
+            if(max_value == 255){
+              return;
+            } else {
+              max_value += value_pwm;
+              Serial.println(max_value);
+            }
+        } else if(message.equals("pwm_down")){
+           if(max_value == 0){
+             return;
+           } else {
+             max_value += value_pwm;
+             Serial.println(max_value);
+           }
         }
     }
 }
@@ -98,6 +110,8 @@ void onWSEvent2(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTy
         Serial.println("WB connect right");
         delay(100);
         ws2.textAll("led_04");
+        delay(100);
+        ws2.textAll("led_02");
     } else if (type == WS_EVT_DISCONNECT) {
         Serial.println("WB disconnect");
     } else if (type == WS_EVT_DATA) {
@@ -166,6 +180,14 @@ void set_config_engines(int value_a, int value_b){
     }
     if(value_b < 0){
         value_b *= (-1);
+    }
+
+    if(value_a > max_value){
+        value_a = max_value;
+    }
+
+    if(value_b > max_value){
+       value_b = max_value;
     }
 
     analogWrite(PWM_A, value_a);
