@@ -14,8 +14,10 @@ AsyncWebSocket ws2("/wr");
 String buffor_data = "";
 int value_pwm;
 bool data_update = false;
-
 bool auto_drive = false;
+bool power_select = false;
+bool lidar_power = false;
+bool buzzer_power = false;
 
 int value_engine_a = 0;
 int value_engine_b = 0;
@@ -33,7 +35,7 @@ long last_time = 0.0;
 
 //Konfiguracja WiFi (client mode)
 const char* ssid = "JF";
-const char* password = "";
+const char* password = "wifiFJ11";
 
 //Parametry silników
 int max_value = 255;
@@ -82,9 +84,10 @@ void onWSEvent1(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTy
         int first_search = buffor_data.indexOf(" ");
         String message = buffor_data.substring(0, first_search);
         value_pwm = buffor_data.substring(first_search + 1, buffor_data.length()).toInt();
+        Serial.println("WB left");
         Serial.println(message);
         Serial.println(value_engine_a);
-        if(message.equals("left_pad")){
+        if(message.equals("left_pad") && !auto_drive){
           value_pwm = map(value_pwm, -100, 100, -255, 255);
           value_engine_a = value_pwm;
         } else if(message.equals("pwm_up")){
@@ -101,6 +104,14 @@ void onWSEvent1(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTy
              max_value += value_pwm;
              Serial.println(max_value);
            }
+        } else if(message.equals("UP")){
+            auto_drive = true;
+            value_engine_a = value_pwm;
+            value_engine_b = value_pwm;
+        } else if(message.equals("DOWN")){
+            auto_drive = true;
+            value_engine_a = value_pwm;
+            value_engine_b = value_pwm;
         }
     }
 }
@@ -120,10 +131,43 @@ void onWSEvent2(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTy
         int first_search = buffor_data.indexOf(" ");
         String message = buffor_data.substring(0, first_search);
         value_pwm = buffor_data.substring(first_search + 1, buffor_data.length()).toInt();
+         Serial.println("WB right");
          Serial.println(message);
-        if(message.equals("right_pad")){
+        if(message.equals("right_pad") && !auto_drive){
           value_pwm = map(value_pwm, -100, 100, -255, 255);
           value_engine_b = value_pwm;
+        } else if(message.equals("left")){
+          auto_drive = true;
+          value_engine_a = value_pwm;
+          value_engine_b = 0;
+        } else if(message.equals("right")){
+          auto_drive = true;
+          value_engine_b = value_pwm;
+          value_engine_a = 0;
+        } else if(message.equals("power")){
+            Serial.println("Power");
+            Serial.println(power_select);
+            if(power_select){
+               power_select = false;
+               ws2.textAll("led_02_off");
+            } else {
+               power_select = true;
+               ws2.textAll("led_02_on");
+            }
+        } else if(message.equals("lidar")){
+              if(value_pwm){
+                 lidar_power = true;
+                 ws2.textAll("led_03_on");
+              } else {
+                 lidar_power = false;
+                 ws2.textAll("led_03_off");
+              }
+        } else if(message.equals("buzzer")){
+              if(!buzzer_power){
+                buzzer_power = true;
+              } else {
+                buzzer_power = false;
+              }
         }
     }
 }
@@ -195,11 +239,14 @@ void set_config_engines(int value_a, int value_b){
 }
 
 void loop() {
-   
     current_time = millis();
-    set_config_engines(value_engine_a, value_engine_b);
-    if(current_time - last_time > 3000){
-        last_time = current_time;
+    if(power_select)  set_config_engines(value_engine_a, value_engine_b);
+    if(current_time - last_time > 1500){
+      if(auto_drive){
+          value_engine_a = 0;
+          value_engine_b = 0;
+          auto_drive = false;
+      }
+      last_time = current_time;
     }
-  
 }
